@@ -1,0 +1,197 @@
+#!/usr/bin/env python
+
+#
+# Dump Tumblr streams.
+#
+
+import getopt
+import os
+import re
+import requests
+import subprocess
+import sys
+from bs4 import BeautifulSoup
+from lxml import html
+from StringIO import StringIO
+
+TARGETS = 'targets'
+DUMP_DIR = 'dump-dir'
+WGET_LOG = 'wget-log'
+DEFAULT_DIR = "tumblr_dumps"
+
+DEFAULT_DUMP_DIR = os.path.join(os.getcwd(), 'dump_directory')
+DEFAULT_DUMP_LOG_FILE = os.path.join(DEFAULT_DUMP_DIR, 'wget.log')
+
+
+# print usage and exit
+#
+def print_usage():
+    '''
+    Prints the usage and exits.
+    '''
+    print(os.path.basename(sys.argv[0]) + " options:")
+    print("\t-h\t\t\tprint this help and exit")
+    print("\t-u URL\t\t\ttumblr to be dumped")
+    print("\t-s URL_1 ... URL_N\tspace separated list of tumblrs to be dumped")
+    print("\t-d DUMP_DIR\t\tdump directory")
+    print("\t-l LOG_FILE\t\tdump log")
+    sys.exit()
+
+
+
+# purge the protocol string from the provided URL
+#
+def clean_url(url):
+    '''
+    Cleans the provided URL and checks for ending "/"
+    '''
+    # purge_protocol_string
+    url = re.sub('^.[a-z]+://', '', url)
+
+    # add "/" at end
+    if not url.endswith("/"):
+        url = url + '/'
+
+    return url
+
+
+
+# get the command line options
+# (might be extended with the parsing of a config file in the future)
+#
+def get_config(argv):
+    '''
+    Parses the command line.
+    '''
+    config = {}
+    config[TARGETS] = []
+    config[DUMP_DIR] = DEFAULT_DUMP_DIR
+    config[WGET_LOG] = DEFAULT_DUMP_LOG_FILE
+
+    try:
+        opts, args = getopt.getopt(argv, 'hu:s:d:l:', ['--url', '--urls', '--dump-dir', '--log'])
+    except getopt.GetoptError:
+        print_usage()
+
+    for opt, arg in opts:
+        if opt == '-h':
+            print_usage()
+
+        elif opt in ('-u', '--url'):
+            config[TARGETS].append(clean_url(arg))
+
+        elif opt in ('-s', '--urls'):
+            for url in arg.split():
+                config[TARGETS].append(clean_url(url))
+
+        elif opt in ('-d', '--dump-dir'):
+            config[DUMP_DIR] = arg
+
+        elif opt in ('-l', '--log'):
+            config[WGET_LOG] = arg
+
+    if len(config[TARGETS]) == 0:
+        print("Error. You must provide at least one tumblr target (multiple targets separated by a space). Exiting")
+        print_usage()
+
+    return config
+
+
+
+# dump the provided list of tumblr targets within the given dump
+# directory
+#
+def dump_tumblrs(targets, dump_dir, dump_log):
+    '''
+    Dumps the provided tumblr targets and stores the crawled content
+    in the provided directory, logging in the given log file.
+    '''
+    page_section = 'page/'
+
+    # put all crawled content inside the provided dump directory
+    parent = os.getcwd()
+    if not os.path.isdir(dump_dir):
+        os.mkdir(dump_dir)
+    # do the job inside the dump directory
+    os.chdir(dump_dir) 
+
+
+    # cycle over each target, and crawl its content
+    for target in targets:
+        url = 'http://' + target
+        print("\nDumping " + url + " ...")
+        post_href = url + 'post/'
+
+        # NOTE on posts:
+        # wget would download only the first page, which is the one
+        # holding the latest posts.
+        # Also, the number of pages for a tumblr is virtually
+        # infinite: Tumblr does not tell that the end is at page 70
+        # (for example), instead it keeps giving back empty tumblr
+        # pages when asked for page 71, 72, etc.
+        # These pages are complete with their layout, sharing
+        # buttons, etc, so in order to avoid asking for "empty"
+        # pages, it is needed to have a look at the page's structure
+        # before blindly download it.
+        # ==> Check for a particular URL string in the retrieved HTML:
+        #
+        #  <a href="http://target.tumblr.com/post/...">
+        #
+        # when an href attribute has such a value, the page contains 
+        # posts
+        #
+        page_counter = 1
+        crawl = True
+
+        final_url = ''
+
+        while crawl:
+            final_url = url + page_section + str(page_counter)
+            response = requests.get(final_url)
+            if response.status_code != 200:
+                crawl = False
+            else:
+                print("\tdumping page " + final_url)
+                page_has_posts = False
+                
+                # clean the response, and check the pattern in each
+                # href (see "NOTE on posts")
+                data  = BeautifulSoup(response.content)
+                tree  = html.parse(StringIO(data))
+                links = tree.xpath('//a/@href')
+                
+                if links:
+                    for link in links:
+                        if link.startswith(post_href):
+                            page_has_posts = True
+
+                crawl = page_has_posts
+
+            # crawl the page in all its glory
+            if crawl:
+                subprocess.call(
+                        ['wget', '--no-cookies', '-mpNHk', '-D', '.media.tumblr.com,url',
+                            '-R', '"*avatar*","*\?*","*_[0-9][0-9][0-9].*"', final_url,
+                            '--limit-rate', '500k', '-w', '0.5', '--random-wait',
+                            '-o', dump_log])
+
+            page_counter += 1 # go to the next page
+            
+        print("\tdone dumping target " + target)
+    
+    # return to the container directory
+    os.chdir(parent)
+
+
+
+if __name__ == '__main__':
+    reload(sys)
+    sys.setdefaultencoding('UTF-8')
+
+    config = get_config(sys.argv[1:])
+
+    tumblrs  = config[TARGETS]
+    dump_dir = config[DUMP_DIR]
+    dump_log = config[WGET_LOG]
+    dump_tumblrs(tumblrs, dump_dir, dump_log)
+
