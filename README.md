@@ -14,11 +14,11 @@ tumblr-dump needs wget, and relies on the following libraries:
 * lxml. Make sure you have these libraries
 
 
-## TODO:
+## TODO
 * css has to be retrieved as well
 * add warc support by default
 * media content is stored in directories that are not within their respective tumblr directory. Example:
-
+    ``
     |-- 31.media.tumblr.com
     |   `-- avatar_34f25f54fa03_128.png
     |-- 36.media.tumblr.com
@@ -37,6 +37,6 @@ tumblr-dump needs wget, and relies on the following libraries:
         `-- page
             |-- 1
             `-- 2
-
+    ``
 The media content retrieved by crawling example1.tumblr.com (shown in the directory tree) might share the same directories as, say, the media content retrieved while crawling example2.tumblr.com.
 Their pages will still reference different media content, but the directories storing their data might overlap. A non overlapping scenario might be preferred.
